@@ -1,6 +1,6 @@
 name: Publish wzcloud macOS to private release
 
-on:
+'on':
   workflow_dispatch:
     inputs:
       source_ref:
