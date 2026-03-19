@@ -9,5 +9,5 @@ Current workflow:
 - `Build wzcloud macOS`
   - Manual trigger only
   - Builds macOS `x64`, `arm64`, and `universal`
-  - Uploads build artifacts instead of publishing a public release
-
+  - Uploads build artifacts
+  - Publishes the built files as GitHub Release assets in this public repo

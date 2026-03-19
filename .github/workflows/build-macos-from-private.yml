@@ -9,7 +9,7 @@ on:
         default: "v5.2.0"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-macos-${{ github.event.inputs.source_ref || 'manual' }}
@@ -39,6 +39,32 @@ jobs:
           git -C source fetch --depth 1 origin "${{ inputs.source_ref }}"
           git -C source checkout --detach FETCH_HEAD
           git -C source rev-parse HEAD
+
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref="${{ inputs.source_ref }}"
+          safe_ref="$(printf '%s' "$source_ref" | tr '/:@ ' '-' | tr -cd 'A-Za-z0-9._-')"
+          if [[ -z "$safe_ref" ]]; then
+            safe_ref="manual"
+          fi
+          version="$(python3 - <<'PY'
+import json
+with open('source/apps/desktop/src/package.json', 'r', encoding='utf-8') as fh:
+    print(json.load(fh)['version'])
+PY
+)"
+          source_sha="$(git -C source rev-parse HEAD)"
+          {
+            echo "source_ref=$source_ref"
+            echo "safe_ref=$safe_ref"
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+            echo "release_tag=$safe_ref"
+            echo "release_title=wzcloud macOS $source_ref"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -77,3 +103,43 @@ jobs:
             source/apps/desktop/src/build/mac-x64/*
             source/apps/desktop/src/build/mac-arm64/*
           if-no-files-found: error
+
+      - name: Publish GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
+          SOURCE_REF: ${{ steps.meta.outputs.source_ref }}
+          SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+          SOURCE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes_file" <<EOF
+          Built from private repo \`zzx396/wzcloud\`.
+
+          - Source ref: \`$SOURCE_REF\`
+          - Source commit: \`$SOURCE_SHA\`
+          - App version: \`$SOURCE_VERSION\`
+          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file "$notes_file"
+          else
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file "$notes_file"
+          fi
+
+          mapfile -t release_files < <(
+            find source/apps/desktop/src/build/mac-universal source/apps/desktop/src/build/mac-x64 source/apps/desktop/src/build/mac-arm64 \
+              -maxdepth 1 \
+              -type f \
+              | sort
+          )
+          if [[ "${#release_files[@]}" -eq 0 ]]; then
+            echo "no release files found" >&2
+            exit 1
+          fi
+
+          gh release upload "$RELEASE_TAG" "${release_files[@]}" --clobber
