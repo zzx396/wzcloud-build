@@ -7,17 +7,22 @@ name: Publish wzcloud macOS to private release
         description: "Private wzcloud ref to build (tag, branch, or commit)"
         required: true
         default: "v5.2.0"
+  repository_dispatch:
+    types:
+      - publish-private-release
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-macos-private-release-${{ github.event.inputs.source_ref || 'manual' }}
+  group: build-macos-private-release-${{ inputs.source_ref || github.event.client_payload.source_ref || 'manual' }}
   cancel-in-progress: false
 
 jobs:
   build-macos:
     runs-on: macos-latest
+    env:
+      SOURCE_REF: ${{ inputs.source_ref || github.event.client_payload.source_ref || 'v5.2.0' }}
     steps:
       - name: Prepare SSH for private source checkout
         shell: bash
@@ -36,7 +41,7 @@ jobs:
           set -euo pipefail
           git init source
           git -C source remote add origin git@github.com:zzx396/wzcloud.git
-          git -C source fetch --depth 1 origin "${{ inputs.source_ref }}"
+          git -C source fetch --depth 1 origin "$SOURCE_REF"
           git -C source checkout --detach FETCH_HEAD
           git -C source rev-parse HEAD
 
@@ -45,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_ref="${{ inputs.source_ref }}"
+          source_ref="$SOURCE_REF"
           safe_ref="$(printf '%s' "$source_ref" | tr '/:@ ' '-' | tr -cd 'A-Za-z0-9._-')"
           if [[ -z "$safe_ref" ]]; then
             safe_ref="manual"
@@ -90,7 +95,7 @@ PY
       - name: Upload universal macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wzcloud-macos-universal-${{ inputs.source_ref }}
+          name: wzcloud-macos-universal-${{ env.SOURCE_REF }}
           path: |
             source/apps/desktop/src/build/mac-universal/*
           if-no-files-found: error
@@ -98,7 +103,7 @@ PY
       - name: Upload architecture-specific macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wzcloud-macos-arch-${{ inputs.source_ref }}
+          name: wzcloud-macos-arch-${{ env.SOURCE_REF }}
           path: |
             source/apps/desktop/src/build/mac-x64/*
             source/apps/desktop/src/build/mac-arm64/*
