@@ -6,8 +6,8 @@ This repository only contains workflow logic. Source code stays in the private r
 
 Current workflow:
 
-- `Build wzcloud macOS`
+- `Publish wzcloud macOS to private release`
   - Manual trigger only
   - Builds macOS `x64`, `arm64`, and `universal`
-  - Uploads build artifacts
-  - Publishes the built files as GitHub Release assets in this public repo
+  - Uploads build artifacts in this public repo
+  - Publishes the universal macOS files into the private `zzx396/wzcloud` release
