@@ -56,11 +56,11 @@ jobs:
             safe_ref="manual"
           fi
           version="$(python3 - <<'PY'
-import json
-with open('source/apps/desktop/src/package.json', 'r', encoding='utf-8') as fh:
-    print(json.load(fh)['version'])
-PY
-)"
+          import json
+          with open('source/apps/desktop/src/package.json', 'r', encoding='utf-8') as fh:
+              print(json.load(fh)['version'])
+          PY
+          )"
           source_sha="$(git -C source rev-parse HEAD)"
           {
             echo "source_ref=$source_ref"
