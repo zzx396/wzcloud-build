@@ -1,0 +1,79 @@
+name: Build wzcloud macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Private wzcloud ref to build (tag, branch, or commit)"
+        required: true
+        default: "v5.2.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-${{ github.event.inputs.source_ref || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Prepare SSH for private source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.WZCLOUD_DEPLOY_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Fetch private wzcloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin git@github.com:zzx396/wzcloud.git
+          git -C source fetch --depth 1 origin "${{ inputs.source_ref }}"
+          git -C source checkout --detach FETCH_HEAD
+          git -C source rev-parse HEAD
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: source/apps/desktop/src/package-lock.json
+
+      - name: Build macOS artifacts
+        shell: bash
+        env:
+          ELECTRON_BUILDER_VERSION: "26.8.1"
+        run: |
+          set -euo pipefail
+          bash ./scripts/build-macos.sh all
+        working-directory: source
+
+      - name: Upload universal macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wzcloud-macos-universal-${{ inputs.source_ref }}
+          path: |
+            source/apps/desktop/src/build/mac-universal/*
+          if-no-files-found: error
+
+      - name: Upload architecture-specific macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wzcloud-macos-arch-${{ inputs.source_ref }}
+          path: |
+            source/apps/desktop/src/build/mac-x64/*
+            source/apps/desktop/src/build/mac-arm64/*
+          if-no-files-found: error
