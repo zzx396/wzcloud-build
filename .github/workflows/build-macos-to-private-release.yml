@@ -151,7 +151,10 @@ jobs:
             gh release create "$RELEASE_TAG" --repo "$PRIVATE_REPO" --target "$SOURCE_SHA" --title "$RELEASE_TITLE" --notes-file "$notes_file"
           fi
 
-          mapfile -t release_files < <(
+          release_files=()
+          while IFS= read -r file; do
+            release_files+=("$file")
+          done < <(
             find "$RUNNER_TEMP/private-release-assets" \
               -maxdepth 1 -type f \
               | sort
