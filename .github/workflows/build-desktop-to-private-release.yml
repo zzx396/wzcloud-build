@@ -278,7 +278,7 @@ jobs:
               name = asset["name"]
               if name not in keep:
                   subprocess.check_call(
-                      ["gh", "api", "-X", "DELETE", f"repos/{repo}/releases/assets/{asset['id']}"]
+                      ["gh", "release", "delete-asset", tag, name, "--repo", repo, "--yes"]
                   )
           PY
 
