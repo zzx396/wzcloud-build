@@ -1,0 +1,299 @@
+name: Publish wzcloud desktop assets to private release
+
+'on':
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Private wzcloud ref to build (tag, branch, or commit)"
+        required: true
+        default: "v5.3.0"
+  repository_dispatch:
+    types:
+      - publish-private-release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-desktop-private-release-${{ inputs.source_ref || github.event.client_payload.source_ref || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      safe_ref: ${{ steps.meta.outputs.safe_ref }}
+      version: ${{ steps.meta.outputs.version }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+    env:
+      SOURCE_REF: ${{ inputs.source_ref || github.event.client_payload.source_ref || 'v5.3.0' }}
+    steps:
+      - name: Prepare SSH for private source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.WZCLOUD_DEPLOY_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Fetch private wzcloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin git@github.com:zzx396/wzcloud.git
+          git -C source fetch --depth 1 origin "$SOURCE_REF"
+          git -C source checkout --detach FETCH_HEAD
+          git -C source rev-parse HEAD
+
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref="$SOURCE_REF"
+          safe_ref="$(printf '%s' "$source_ref" | tr '/:@ ' '-' | tr -cd 'A-Za-z0-9._-')"
+          if [[ -z "$safe_ref" ]]; then
+            safe_ref="manual"
+          fi
+          version="$(python3 - <<'PY'
+          import json
+          with open('source/apps/desktop/src/package.json', 'r', encoding='utf-8') as fh:
+              print(json.load(fh)['version'])
+          PY
+          )"
+          source_sha="$(git -C source rev-parse HEAD)"
+          {
+            echo "source_ref=$source_ref"
+            echo "safe_ref=$safe_ref"
+            echo "version=$version"
+            echo "source_sha=$source_sha"
+            echo "release_tag=$safe_ref"
+            echo "release_title=wzcloud desktop $version"
+          } >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-latest
+    env:
+      SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+      APP_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Prepare SSH for private source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.WZCLOUD_DEPLOY_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Fetch private wzcloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin git@github.com:zzx396/wzcloud.git
+          git -C source fetch --depth 1 origin "$SOURCE_REF"
+          git -C source checkout --detach FETCH_HEAD
+          git -C source rev-parse HEAD
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: source/apps/desktop/src/package-lock.json
+
+      - name: Build macOS dmg
+        shell: bash
+        env:
+          ELECTRON_BUILDER_VERSION: "26.8.1"
+        working-directory: source
+        run: |
+          set -euo pipefail
+          bash ./scripts/build-macos.sh universal
+
+      - name: Prepare macOS release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/private-release-assets-macos"
+          mkdir -p "$release_dir"
+          cp -f "source/apps/desktop/src/build/mac-universal/御鸠云-${APP_VERSION}-universal.dmg" "$release_dir/wzcloud-${APP_VERSION}-universal.dmg"
+          ls -lah "$release_dir"
+
+      - name: Upload macOS release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: wzcloud-macos-release-${{ env.SOURCE_REF }}
+          path: ${{ runner.temp }}/private-release-assets-macos/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-latest
+    env:
+      SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+      APP_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Prepare SSH for private source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.WZCLOUD_DEPLOY_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Fetch private wzcloud source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin git@github.com:zzx396/wzcloud.git
+          git -C source fetch --depth 1 origin "$SOURCE_REF"
+          git -C source checkout --detach FETCH_HEAD
+          git -C source rev-parse HEAD
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: source/apps/desktop/src/package-lock.json
+
+      - name: Build Windows installer
+        shell: pwsh
+        env:
+          ELECTRON_BUILDER_VERSION: "26.8.1"
+        working-directory: source
+        run: |
+          ./scripts/build-windows.ps1 -Target nsis -ElectronBuilderVersion $env:ELECTRON_BUILDER_VERSION
+
+      - name: Prepare Windows release asset
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $env:RUNNER_TEMP "private-release-assets-windows"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          $installer = Get-ChildItem -Path "source/apps/desktop/src/build" -Filter "*.exe" -File |
+            Where-Object { $_.Name -match "Setup" } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "Windows installer not found in source/apps/desktop/src/build"
+          }
+          Copy-Item -Force $installer.FullName (Join-Path $releaseDir "wzcloud-$env:APP_VERSION-setup.exe")
+          Get-ChildItem $releaseDir
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: wzcloud-windows-release-${{ env.SOURCE_REF }}
+          path: ${{ runner.temp }}/private-release-assets-windows/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    needs:
+      - prepare
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+      SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      SOURCE_VERSION: ${{ needs.prepare.outputs.version }}
+      PRIVATE_REPO: zzx396/wzcloud
+      MAC_ASSET_NAME: wzcloud-${{ needs.prepare.outputs.version }}-universal.dmg
+      WINDOWS_ASSET_NAME: wzcloud-${{ needs.prepare.outputs.version }}-setup.exe
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/release-assets
+          pattern: wzcloud-*-release-${{ env.SOURCE_REF }}
+          merge-multiple: true
+
+      - name: Publish private wzcloud release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WZCLOUD_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes_file" <<EOF
+          Built from private repo \`$PRIVATE_REPO\`.
+
+          - Source ref: \`$SOURCE_REF\`
+          - Source commit: \`$SOURCE_SHA\`
+          - App version: \`$SOURCE_VERSION\`
+          - Assets: \`$MAC_ASSET_NAME\`, \`$WINDOWS_ASSET_NAME\`
+          - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          if gh release view "$RELEASE_TAG" --repo "$PRIVATE_REPO" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$PRIVATE_REPO" --title "$RELEASE_TITLE" --notes-file "$notes_file"
+          else
+            gh release create "$RELEASE_TAG" --repo "$PRIVATE_REPO" --target "$SOURCE_SHA" --title "$RELEASE_TITLE" --notes-file "$notes_file"
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["PRIVATE_REPO"]
+          keep = {os.environ["MAC_ASSET_NAME"], os.environ["WINDOWS_ASSET_NAME"]}
+          raw = subprocess.check_output(
+              ["gh", "release", "view", tag, "--repo", repo, "--json", "assets"],
+              text=True,
+          )
+          assets = json.loads(raw).get("assets", [])
+          for asset in assets:
+              name = asset["name"]
+              if name not in keep:
+                  subprocess.check_call(
+                      ["gh", "api", "-X", "DELETE", f"repos/{repo}/releases/assets/{asset['id']}"]
+                  )
+          PY
+
+          release_files=()
+          while IFS= read -r file; do
+            release_files+=("$file")
+          done < <(
+            find "$RUNNER_TEMP/release-assets" \
+              -maxdepth 1 -type f \
+              | sort
+          )
+
+          if [[ "${#release_files[@]}" -eq 0 ]]; then
+            echo "no release files found" >&2
+            exit 1
+          fi
+
+          gh release upload "$RELEASE_TAG" --repo "$PRIVATE_REPO" "${release_files[@]}" --clobber
